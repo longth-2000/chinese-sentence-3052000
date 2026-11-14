@@ -74,6 +74,15 @@ nav.act button{border:1px solid var(--line);background:var(--card);border-radius
 #prev,#next{flex:1}
 #know{flex:1.6;background:var(--acc);border-color:var(--acc);color:var(--acc-ink)}
 #know[aria-pressed="true"]{background:var(--ok-soft);border-color:var(--ok);color:var(--ok)}
+.w{cursor:pointer;border-radius:10px;padding:2px 1px;margin:0 -1px;transition:background .15s}
+.w[aria-pressed="true"]{background:var(--acc-soft);box-shadow:0 0 0 2px var(--acc-soft)}
+.gloss{min-height:96px;border-radius:14px;background:var(--card-2);padding:12px 14px;display:flex;flex-direction:column;gap:4px;font-size:16px;color:var(--mute)}
+.gloss .gz{font-family:var(--font-zh);font-size:30px;color:var(--ink);line-height:1.2}
+.gloss .gp{font-size:20px;font-weight:700;color:var(--acc)}
+.gloss .gv{font-size:18px;color:var(--ink)}
+.gloss .gh{font-size:13px}
+.gloss .row{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.speak{flex:none;border:1px solid var(--acc);background:var(--acc);color:var(--acc-ink);border-radius:12px;padding:8px 14px;font-weight:600;min-height:42px}
 .empty{padding:28px 8px;text-align:center;color:var(--mute)}
 .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
 .cell{border:1px solid var(--line);background:var(--card);border-radius:14px;padding:8px 2px 6px;display:flex;flex-direction:column;align-items:center;gap:0}
@@ -102,9 +111,11 @@ nav.act button{border:1px solid var(--line);background:var(--card);border-radius
     <section class="card" id="card" aria-live="polite">
       <div class="meta"><span id="pos"></span></div>
       <div class="sent" id="sent"></div>
+      <div class="gloss" id="gloss"></div>
       <div class="trans" id="trans"></div>
     </section>
     <div class="tools">
+      <button class="tool" id="t-speak">Nghe cả câu</button>
       <button class="tool" id="t-rand" aria-pressed="false">Ngẫu nhiên</button>
       <button class="tool" id="t-todo" aria-pressed="false">Chưa thuộc</button>
     </div>
@@ -172,6 +183,40 @@ function renderProgress(){
   $('prog').textContent = n + ' / ' + t + ' câu đã thuộc';
   $('barfill').style.width = (100 * n / t) + '%';
 }
+/* ---- word detail + pronunciation ---- */
+let VOICE = null;
+function pickVoice(){
+  if (!('speechSynthesis' in window)) return;
+  const vs = speechSynthesis.getVoices();
+  VOICE = vs.find(v => /^zh[-_]CN/i.test(v.lang)) || vs.find(v => /^zh/i.test(v.lang)) || null;
+}
+if ('speechSynthesis' in window) { pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; }
+function speak(text){
+  if (!('speechSynthesis' in window)) return false;
+  try {
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = 'zh-CN'; u.rate = 0.8; if (VOICE) u.voice = VOICE;
+    speechSynthesis.speak(u);
+    return true;
+  } catch (e) { return false; }
+}
+function showGloss(tok, w){
+  [...$('sent').querySelectorAll('.w')].forEach(x => x.setAttribute('aria-pressed', String(x === w)));
+  const g = $('gloss'); g.textContent = '';
+  const top = el('div', 'row');
+  top.appendChild(el('div', 'gz', tok.zh));
+  const sp = el('button', 'speak', 'Nghe'); sp.type = 'button'; sp.onclick = () => speak(tok.zh);
+  top.appendChild(sp);
+  g.appendChild(top);
+  g.appendChild(el('div', 'gp', tok.py));
+  g.appendChild(el('div', 'gv', tok.vi));
+  const hv = [...tok.zh].map(c => DICT[c]).filter(Boolean).join(' · ');
+  if (hv) g.appendChild(el('div', 'gh', 'Hán Việt: ' + hv));
+  if (!VOICE) g.appendChild(el('div', 'gh', 'Không nghe tiếng? Bật giọng tiếng Trung: Cài đặt, Trợ năng, Nội dung đọc, Giọng nói.'));
+  speak(tok.zh);
+}
+
 function render(){
   renderProgress();
   $('t-rand').setAttribute('aria-pressed', String(S.rand));
@@ -185,7 +230,7 @@ function render(){
   } else fl.hidden = true;
 
   const sent = $('sent'), tr = $('trans');
-  sent.textContent = ''; tr.textContent = '';
+  sent.textContent = ''; tr.textContent = ''; $('gloss').textContent = '';
   const s = S.list[S.pos];
   if (!s) {
     $('pos').textContent = '';
@@ -197,7 +242,15 @@ function render(){
   sent.style.fontSize = '';
   $('know').disabled = false; $('prev').disabled = false; $('next').disabled = false;
   $('pos').textContent = 'Câu ' + (S.pos + 1) + ' / ' + S.list.length;
-  sent.textContent = s.zh;
+  s.t.forEach(tok => {
+    if (tok.p != null) { sent.appendChild(document.createTextNode(tok.p)); return; }
+    const w = el('span', 'w', tok.zh); w.setAttribute('role', 'button'); w.tabIndex = 0; w.setAttribute('aria-pressed', 'false');
+    w.setAttribute('aria-label', tok.zh + ', ' + tok.py + ', ' + tok.vi);
+    const pick = () => showGloss(tok, w);
+    w.onclick = pick; w.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } };
+    sent.appendChild(w);
+  });
+  $('gloss').textContent = 'Chạm vào một từ để xem pinyin, nghĩa và nghe phát âm.';
   const b = el('button', 'tool', 'Xem nghĩa');
   b.onclick = () => { tr.textContent = ''; tr.appendChild(el('div', 'py', s.py)); tr.appendChild(el('div', 'vi', s.vi)); };
   tr.appendChild(b);
@@ -240,6 +293,7 @@ $('know').onclick = () => {
   if (S.learned.has(s.zh)) { S.learned.delete(s.zh); save(); render(); }
   else { S.learned.add(s.zh); save(); go(1); }
 };
+$('t-speak').onclick = () => { const s = S.list[S.pos]; if (s) speak(s.zh); };
 $('t-rand').onclick = () => { S.rand = !S.rand; const cur = S.list[S.pos]; buildList(cur && cur.id); render(); };
 $('t-todo').onclick = () => { S.todo = !S.todo; buildList(); render(); };
 $('tab-learn').onclick = () => setTab('learn');
