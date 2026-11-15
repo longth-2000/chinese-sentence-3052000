@@ -41,7 +41,7 @@ h1{font-size:20px;margin:0;font-weight:700;letter-spacing:-.01em;text-wrap:balan
 .bar{height:6px;background:var(--line);border-radius:3px;overflow:hidden}
 .bar i{display:block;height:100%;width:0;background:var(--acc);transition:width .3s}
 .tabs{display:flex;gap:6px;background:var(--card-2);padding:4px;border-radius:12px}
-.tabs button{flex:1;border:0;background:transparent;padding:9px 0;border-radius:9px;font-weight:600;color:var(--mute);min-height:40px}
+.tabs button{flex:1;border:0;background:transparent;padding:9px 2px;font-size:15px;white-space:nowrap;border-radius:9px;font-weight:600;color:var(--mute);min-height:40px}
 .tabs button[aria-selected="true"]{background:var(--card);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.12)}
 main{flex:1;min-height:0;overflow-y:auto;padding:4px 16px 12px;display:flex;flex-direction:column;gap:12px}
 main[hidden]{display:none}
@@ -102,6 +102,23 @@ nav.act button{border:1px solid var(--line);background:var(--card);border-radius
 .trow .tx{flex:1;min-width:0}
 .trow button{flex:none;border:1px solid var(--acc);background:var(--acc-soft);border-radius:10px;padding:6px 12px;min-height:38px}
 .export{width:100%;min-height:90px;border:1px solid var(--line);border-radius:12px;background:var(--card);color:var(--ink);padding:8px;font:13px/1.4 ui-monospace,Menlo,monospace}
+[hidden]{display:none!important}
+.sbox{width:100%;font:inherit;font-size:17px;border:1px solid var(--line);border-radius:14px;background:var(--card);color:var(--ink);padding:12px 14px;min-height:48px}
+.sbox:focus{outline:3px solid var(--acc);outline-offset:1px}
+.results{display:flex;flex-direction:column;gap:8px}
+.rh{font-size:13px;font-weight:700;color:var(--mute);margin:6px 2px 0;letter-spacing:.02em}
+.rw{border:1px solid var(--line);background:var(--card);border-radius:14px;padding:10px 12px;display:flex;flex-direction:column;gap:6px;text-align:left;width:100%}
+.rw .top{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.rw .rz{font-family:var(--font-zh);font-size:28px;line-height:1.2}
+.rw .rp{color:var(--acc);font-weight:700;font-size:17px}
+.rw .rv{font-size:16px}
+.rw .rm{font-size:13px;color:var(--mute)}
+.rw .cnt{margin-left:auto;font-size:12px;color:var(--mute);border:1px solid var(--line);border-radius:999px;padding:2px 8px}
+.rs{border:0;border-top:1px dashed var(--line);background:transparent;padding:9px 2px;text-align:left;width:100%;display:flex;flex-direction:column;gap:2px}
+.rs .sz{font-family:var(--font-zh);font-size:22px}
+.rs .sv{font-size:14px;color:var(--mute)}
+.sent-only{border:1px solid var(--line);background:var(--card);border-radius:14px;padding:10px 12px}
+.sent-only .rs{border-top:0;padding:0}
 @media (prefers-reduced-motion: reduce){.bar i{transition:none}}
 </style>
 </head>
@@ -112,6 +129,7 @@ nav.act button{border:1px solid var(--line);background:var(--card);border-radius
     <div class="bar" aria-hidden="true"><i id="barfill"></i></div>
     <div class="tabs" role="tablist">
       <button role="tab" id="tab-learn" aria-selected="true">Câu</button>
+      <button role="tab" id="tab-search" aria-selected="false">Tìm</button>
       <button role="tab" id="tab-chars" aria-selected="false">168 chữ</button>
       <button role="tab" id="tab-trash" aria-selected="false">Đã xoá</button>
     </div>
@@ -133,6 +151,11 @@ nav.act button{border:1px solid var(--line);background:var(--card);border-radius
       <button class="tool" id="t-gram" aria-pressed="false">Ngữ pháp</button>
       <button class="tool danger" id="t-del">Xoá câu</button>
     </div>
+  </main>
+
+  <main id="search" hidden>
+    <input class="sbox" id="q" type="search" inputmode="search" enterkeyhint="search" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Tìm bằng chữ Hán, pinyin hoặc tiếng Việt" aria-label="Tìm từ">
+    <div id="results" class="results"></div>
   </main>
 
   <main id="chars" hidden>
@@ -175,6 +198,7 @@ DATA.sections.forEach((s, si) => s.items.forEach(it => {
 const live = s => !S.deleted.has(s.zh);
 let CHAR_COUNT = {};
 function recount(){
+  if (typeof WIDX !== 'undefined') WIDX = null;
   CHAR_COUNT = {};
   ALL.filter(live).forEach(s => { new Set(s.zh).forEach(ch => { CHAR_COUNT[ch] = (CHAR_COUNT[ch] || 0) + 1; }); });
 }
@@ -317,13 +341,105 @@ function renderGrid(){
   });
 }
 function setTab(t){
-  ['learn', 'chars', 'trash'].forEach(k => {
+  ['learn', 'search', 'chars', 'trash'].forEach(k => {
     $(k).hidden = k !== t;
     $('tab-' + k).setAttribute('aria-selected', String(k === t));
   });
   $('actbar').hidden = t !== 'learn';
   if (t === 'trash') renderTrash();
+  if (t === 'search') { renderSearch(); }
 }
+
+/* ---- search (Chinese, pinyin, Vietnamese, Hán Việt, English) ---- */
+const norm = s => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd');
+const compact = s => norm(s).replace(/[^a-z0-9]/g, '');
+const HAN = /[\u3400-\u9fff]/;
+function openSentence(id){
+  S.ch = ''; S.todo = false; S.rand = false;
+  buildList(id); setTab('learn'); render();
+  $('learn').scrollTo({ top: 0 });
+}
+function wordIndex(){
+  const m = new Map();
+  ALL.filter(live).forEach(s => s.t.forEach(tok => {
+    if (tok.p != null) return;
+    const k = tok.zh + '|' + tok.py + '|' + tok.vi;
+    let w = m.get(k);
+    if (!w) {
+      const hv = [...tok.zh].map(c => DICT[c]).filter(Boolean).join(' ');
+      const en = (typeof EXTRA !== 'undefined' && EXTRA.en && EXTRA.en[tok.zh]) || '';
+      w = { zh: tok.zh, py: tok.py, vi: tok.vi, hv, en, npy: compact(tok.py), nvi: norm(tok.vi), nhv: norm(hv), nen: norm(en), ids: [] };
+      m.set(k, w);
+    }
+    if (!w.ids.includes(s.id)) w.ids.push(s.id);
+  }));
+  return [...m.values()];
+}
+function wordScore(w, q, nq, cq){
+  if (HAN.test(q)) { if (w.zh === q) return 100; if (w.zh.includes(q)) return 70; if (q.includes(w.zh)) return 40; return 0; }
+  let sc = 0;
+  const hit = (field, exact, starts, incl) => {
+    if (!field) return;
+    const parts = field.split(/[^a-z0-9]+/).filter(Boolean);
+    if (parts.includes(nq)) sc = Math.max(sc, exact);
+    else if (field.startsWith(nq) || parts.some(p => p.startsWith(nq))) sc = Math.max(sc, starts);
+    else if (nq.length >= 2 && field.includes(nq)) sc = Math.max(sc, incl);
+  };
+  if (cq && w.npy === cq) sc = 95; else if (cq && w.npy.startsWith(cq)) sc = Math.max(sc, 75); else if (cq.length >= 2 && w.npy.includes(cq)) sc = Math.max(sc, 50);
+  hit(w.nvi, 90, 70, 55); hit(w.nhv, 85, 65, 45); hit(w.nen, 60, 50, 30);
+  return sc;
+}
+function sentScore(s, q, nq, cq){
+  if (HAN.test(q)) return s.zh.includes(q) ? 60 : 0;
+  if (nq.length < 2) return 0;
+  if (norm(s.vi).includes(nq)) return 60;
+  if (cq.length >= 2 && compact(s.py).includes(cq)) return 50;
+  return 0;
+}
+let WIDX = null;
+function sentBtn(s){
+  const b = el('button', 'rs'); b.type = 'button';
+  b.appendChild(el('span', 'sz', s.zh)); b.appendChild(el('span', 'sv', s.vi));
+  b.onclick = () => openSentence(s.id);
+  return b;
+}
+function renderSearch(){
+  if (!WIDX) WIDX = wordIndex();
+  const q = $('q').value.trim(), box = $('results'); box.textContent = '';
+  if (!q) {
+    box.appendChild(el('div', 'empty', 'Gõ chữ Hán (水), pinyin (shui) hoặc tiếng Việt (nước, thủy) để tìm từ và câu.'));
+    return;
+  }
+  const nq = norm(q), cq = compact(q);
+  const words = WIDX.map(w => ({ w, sc: wordScore(w, q, nq, cq) })).filter(x => x.sc > 0)
+    .sort((a, b) => b.sc - a.sc || b.w.ids.length - a.w.ids.length).slice(0, 40);
+  const sents = ALL.filter(live).map(s => ({ s, sc: sentScore(s, q, nq, cq) })).filter(x => x.sc > 0).slice(0, 30);
+  if (!words.length && !sents.length) { box.appendChild(el('div', 'empty', 'Không tìm thấy. Thử gõ không dấu hoặc một phần của từ.')); return; }
+  if (words.length) {
+    box.appendChild(el('div', 'rh', 'TỪ (' + words.length + ')'));
+    words.forEach(({ w }) => {
+      const c = el('div', 'rw'), top = el('div', 'top');
+      top.appendChild(el('span', 'rz', w.zh)); top.appendChild(el('span', 'rp', w.py));
+      top.appendChild(el('span', 'cnt', w.ids.length + ' câu'));
+      c.appendChild(top);
+      c.appendChild(el('div', 'rv', w.vi));
+      const meta = [w.hv && 'Hán Việt: ' + w.hv, w.en && 'English: ' + w.en].filter(Boolean).join(' · ');
+      if (meta) c.appendChild(el('div', 'rm', meta));
+      const sp = el('button', 'speak', 'Nghe'); sp.type = 'button'; sp.style.alignSelf = 'flex-start'; sp.onclick = () => speak(w.zh);
+      c.appendChild(sp);
+      w.ids.slice(0, 6).forEach(id => c.appendChild(sentBtn(ALL[id])));
+      if (w.ids.length > 6) c.appendChild(el('div', 'rm', 'và ' + (w.ids.length - 6) + ' câu khác'));
+      box.appendChild(c);
+    });
+  }
+  if (sents.length) {
+    box.appendChild(el('div', 'rh', 'CÂU (' + sents.length + ')'));
+    sents.forEach(({ s }) => { const d = el('div', 'sent-only'); d.appendChild(sentBtn(s)); box.appendChild(d); });
+  }
+}
+let qTimer = null;
+$('q').addEventListener('input', () => { clearTimeout(qTimer); qTimer = setTimeout(renderSearch, 120); });
+$('q').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); $('q').blur(); } });
 
 /* ---- events ---- */
 $('prev').onclick = () => go(-1);
@@ -379,6 +495,7 @@ $('t-copy').onclick = async () => {
 $('t-restore-all').onclick = () => { if (confirm('Khôi phục tất cả ' + S.deleted.size + ' câu đã xoá?')) restore([...S.deleted]); };
 $('t-todo').onclick = () => { S.todo = !S.todo; buildList(); render(); };
 $('tab-learn').onclick = () => setTab('learn');
+$('tab-search').onclick = () => { setTab('search'); $('q').focus(); };
 $('tab-chars').onclick = () => setTab('chars');
 $('tab-trash').onclick = () => setTab('trash');
 let x0 = null, y0 = null;
